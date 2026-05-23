@@ -1,5 +1,8 @@
 mod process_list;
 mod pid_lookup;
+mod divert;
+mod nat;
+
 use process_list::ProcessInfo;
 
 #[tauri::command]
