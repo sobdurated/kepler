@@ -2,6 +2,8 @@
 
 Kepler is a high-performance, per-app network tunnel for Windows. It allows users to route network traffic of specific Windows processes (applications) through an upstream SOCKS5 proxy using WinDivert kernel packet interception.
 
+![kepler ui](src/kepler_ui.png)
+
 ```mermaid
 flowchart TD
     subgraph Frontend [UI - HTML/CSS/JS]
