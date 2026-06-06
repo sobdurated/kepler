@@ -1,30 +1,43 @@
+#[cfg(target_os = "windows")]
 mod divert;
 mod nat;
+#[cfg(target_os = "windows")]
 mod pid_lookup;
+#[cfg(target_os = "windows")]
 mod process_list;
 mod proxy;
 mod socks5;
 mod state;
+#[cfg(target_os = "windows")]
 mod tunnel;
 
+
+
+#[cfg(target_os = "windows")]
 use process_list::ProcessInfo;
 use state::{AppState, ProxyConfig};
 use std::sync::Arc;
 use tauri::{Manager, State};
+#[cfg(target_os = "windows")]
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
+#[cfg(target_os = "windows")]
 use tauri::tray::{TrayIconBuilder, TrayIconEvent, MouseButton, MouseButtonState};
+#[cfg(target_os = "windows")]
 use tauri::image::Image;
 use tracing::{error, info};
 
 
 
 /// returns running processes
+#[cfg(target_os = "windows")]
 #[tauri::command]
 async fn get_running_apps() -> Result<Vec<ProcessInfo>, String> {
     Ok(process_list::get_processes())
 }
 
+
 /// starts proxies and engine if not running
+#[cfg(target_os = "windows")]
 async fn ensure_engine_started(state: &AppState) -> Result<(), String> {
     let mut engine_guard = state.tunnel_engine.lock();
     if engine_guard.is_some() {
@@ -86,6 +99,7 @@ async fn ensure_engine_started(state: &AppState) -> Result<(), String> {
 }
 
 /// tunnels a pid
+#[cfg(target_os = "windows")]
 async fn start_tunnel_internal(pid: u32, state: &AppState) -> Result<(), String> {
     // already tunneling this pid?
     if state.active_pids.lock().contains(&pid) {
@@ -103,6 +117,7 @@ async fn start_tunnel_internal(pid: u32, state: &AppState) -> Result<(), String>
 }
 
 /// tunnels a single pid
+#[cfg(target_os = "windows")]
 #[tauri::command]
 async fn start_tunnel(pid: u32, state: State<'_, AppState>) -> Result<String, String> {
     info!(pid, "Adding PID to tunnel set");
@@ -112,6 +127,7 @@ async fn start_tunnel(pid: u32, state: State<'_, AppState>) -> Result<String, St
 }
 
 /// tunnels multiple pids
+#[cfg(target_os = "windows")]
 #[tauri::command]
 async fn start_tunnels(pids: Vec<u32>, state: State<'_, AppState>) -> Result<String, String> {
     info!(?pids, "Adding multiple PIDs to tunnel set");
@@ -125,6 +141,7 @@ async fn start_tunnels(pids: Vec<u32>, state: State<'_, AppState>) -> Result<Str
 }
 
 /// stops tunneling a pid
+#[cfg(target_os = "windows")]
 #[tauri::command]
 async fn stop_tunnel(pid: u32, state: State<'_, AppState>) -> Result<String, String> {
     info!(pid, "Removing PID from tunnel set");
@@ -148,6 +165,7 @@ async fn stop_tunnel(pid: u32, state: State<'_, AppState>) -> Result<String, Str
 }
 
 /// stops tunneling multiple pids
+#[cfg(target_os = "windows")]
 #[tauri::command]
 async fn stop_tunnels(pids: Vec<u32>, state: State<'_, AppState>) -> Result<String, String> {
     info!(?pids, "Removing multiple PIDs from tunnel set");
@@ -203,22 +221,28 @@ async fn set_global_tunnel_active_internal(active: bool, app: &tauri::AppHandle,
         *started = active;
 
         // update tray menu item
-        if let Some(item) = &*state.tray_toggle_item.lock() {
-            let text = if active { "Stop Tunnel" } else { "Start Tunnel" };
-            let _ = item.set_text(text);
+        #[cfg(target_os = "windows")]
+        {
+            if let Some(item) = &*state.tray_toggle_item.lock() {
+                let text = if active { "Stop Tunnel" } else { "Start Tunnel" };
+                let _ = item.set_text(text);
+            }
         }
         old
     };
 
     // update tray icon
-    if let Some(tray) = app.tray_by_id("main") {
-        let icon_bytes = if active {
-            include_bytes!("../icons/icon-active.png") as &[u8]
-        } else {
-            include_bytes!("../icons/icon-inactive.png") as &[u8]
-        };
-        if let Ok(icon) = Image::from_bytes(icon_bytes) {
-            let _ = tray.set_icon(Some(icon));
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(tray) = app.tray_by_id("main") {
+            let icon_bytes = if active {
+                include_bytes!("../icons/icon-active.png") as &[u8]
+            } else {
+                include_bytes!("../icons/icon-inactive.png") as &[u8]
+            };
+            if let Ok(icon) = Image::from_bytes(icon_bytes) {
+                let _ = tray.set_icon(Some(icon));
+            }
         }
     }
 
@@ -226,25 +250,24 @@ async fn set_global_tunnel_active_internal(active: bool, app: &tauri::AppHandle,
 
     if old_state != active {
         if !active {
+            #[cfg(target_os = "windows")]
             shutdown_engine(state);
             info!("Global tunnel stopped — engine shut down");
         } else {
-            let should_start = !state.active_pids.lock().is_empty() || !state.auto_tunnel_names.lock().is_empty();
-            if should_start {
-                info!("Global tunnel started — starting engine immediately");
-                if let Err(e) = ensure_engine_started(state).await {
-                    error!(%e, "Failed to start tunnel engine immediately");
+            #[cfg(target_os = "windows")]
+            {
+                let should_start = !state.active_pids.lock().is_empty() || !state.auto_tunnel_names.lock().is_empty();
+                if should_start {
+                    info!("Global tunnel started — starting engine immediately");
+                    if let Err(e) = ensure_engine_started(state).await {
+                        error!(%e, "Failed to start tunnel engine immediately");
+                    }
                 }
             }
         }
     }
 }
 
-/// returns true if master tunnel is on
-#[tauri::command]
-async fn is_global_tunnel_active(state: State<'_, AppState>) -> Result<bool, String> {
-    Ok(*state.tunnel_started.lock())
-}
 
 /// toggles global tunnel switch
 #[tauri::command]
@@ -256,16 +279,31 @@ async fn set_global_tunnel_active(active: bool, app: tauri::AppHandle, state: St
 /// returns current tunnel status
 #[tauri::command]
 async fn get_tunnel_status(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
-    let pids: Vec<u32> = state.active_pids.lock().iter().copied().collect();
     let is_started = *state.tunnel_started.lock();
-    let is_engine_running = state.tunnel_engine.lock().is_some();
-    Ok(serde_json::json!({
-        "active": is_started && !pids.is_empty(),
-        "active_pids": pids,
-        "nat_entries": state.nat_table.len(),
-        "tunnel_started": is_started,
-        "engine_running": is_engine_running,
-    }))
+    
+    #[cfg(target_os = "windows")]
+    {
+        let pids: Vec<u32> = state.active_pids.lock().iter().copied().collect();
+        let is_engine_running = state.tunnel_engine.lock().is_some();
+        Ok(serde_json::json!({
+            "active": is_started && !pids.is_empty(),
+            "active_pids": pids,
+            "nat_entries": state.nat_table.len(),
+            "tunnel_started": is_started,
+            "engine_running": is_engine_running,
+        }))
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        Ok(serde_json::json!({
+            "active": is_started,
+            "active_pids": Vec::<u32>::new(),
+            "nat_entries": state.nat_table.len(),
+            "tunnel_started": is_started,
+            "engine_running": is_started,
+        }))
+    }
 }
 
 /// returns socks5 proxy config
@@ -388,6 +426,24 @@ fn save_config(app: &tauri::AppHandle, state: &AppState) {
     }
 }
 
+#[cfg(target_os = "windows")]
+fn cleanup_windivert_service() {
+    use std::process::Command;
+    use std::os::windows::process::CommandExt;
+
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+    info!("Cleaning up WinDivert services...");
+    let _ = Command::new("cmd")
+        .args(&["/C", "sc stop WinDivert1.4 && sc delete WinDivert1.4"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status();
+    let _ = Command::new("cmd")
+        .args(&["/C", "sc stop WinDivert && sc delete WinDivert"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status();
+}
+
 /// stops engine and proxy tasks
 fn shutdown_engine(state: &AppState) {
     // signal proxy/relay shutdown
@@ -396,8 +452,12 @@ fn shutdown_engine(state: &AppState) {
     }
 
     // stop windivert engine
-    if let Some(engine) = state.tunnel_engine.lock().take() {
-        engine.stop();
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(engine) = state.tunnel_engine.lock().take() {
+            engine.stop();
+        }
+        cleanup_windivert_service();
     }
 
     // clear nat table
@@ -420,231 +480,232 @@ pub fn run() {
 
     info!("Kepler Tunnel starting");
 
-    let app = tauri::Builder::default()
+    let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
-        .manage(AppState::new())
-        .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                api.prevent_close();
-                let _ = window.hide();
-            }
-        })
-        .invoke_handler(tauri::generate_handler![
-            get_running_apps,
-            start_tunnel,
-            stop_tunnel,
-            start_tunnels,
-            stop_tunnels,
-            get_tunnel_status,
-            get_proxy_config,
-            set_proxy_config,
-            test_proxy_connection,
-            get_auto_tunnel_names,
-            set_auto_tunnel_names,
-            is_global_tunnel_active,
-            set_global_tunnel_active,
-        ])
-        .setup(|app| {
-            let state = app.state::<AppState>();
+        .manage(AppState::new());
 
-            // load config
-            if let Ok(config_dir) = app.path().app_config_dir() {
-                let config_path = config_dir.join("config.json");
-                if config_path.exists() {
-                    if let Ok(json) = std::fs::read_to_string(&config_path) {
-                        if let Ok(p_config) = serde_json::from_str::<PersistedConfig>(&json) {
-                            info!("Loaded configuration from disk");
-                            *state.proxy_config.lock() = p_config.proxy_config;
-                            *state.auto_tunnel_names.lock() = p_config.auto_tunnel_names.into_iter().collect();
-                            *state.tunnel_started.lock() = p_config.tunnel_started;
+    #[cfg(target_os = "windows")]
+    {
+        builder = builder
+            .on_window_event(|window, event| {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            })
+            .invoke_handler(tauri::generate_handler![
+                get_running_apps,
+                start_tunnel,
+                stop_tunnel,
+                start_tunnels,
+                stop_tunnels,
+                get_tunnel_status,
+                get_proxy_config,
+                set_proxy_config,
+                test_proxy_connection,
+                get_auto_tunnel_names,
+                set_auto_tunnel_names,
+                set_global_tunnel_active,
+            ])
+            .setup(|app| {
+                let state = app.state::<AppState>();
+
+                // Clean up any dangling services from previous crash
+                cleanup_windivert_service();
+
+                // load config
+                if let Ok(config_dir) = app.path().app_config_dir() {
+                    let config_path = config_dir.join("config.json");
+                    if config_path.exists() {
+                        if let Ok(json) = std::fs::read_to_string(&config_path) {
+                            if let Ok(p_config) = serde_json::from_str::<PersistedConfig>(&json) {
+                                info!("Loaded configuration from disk");
+                                *state.proxy_config.lock() = p_config.proxy_config;
+                                *state.auto_tunnel_names.lock() = p_config.auto_tunnel_names.into_iter().collect();
+                                *state.tunnel_started.lock() = p_config.tunnel_started;
+                            }
                         }
                     }
                 }
-            }
 
-            let is_started = *state.tunnel_started.lock();
+                let is_started = *state.tunnel_started.lock();
 
-            // setup system tray menu
-            let show_i = MenuItemBuilder::new("Show Kepler").id("show").build(app)?;
-            let toggle_text = if is_started { "Stop Tunnel" } else { "Start Tunnel" };
-            let toggle_i = MenuItemBuilder::new(toggle_text).id("toggle").build(app)?;
-            let quit_i = MenuItemBuilder::new("Quit").id("quit").build(app)?;
+                // setup system tray menu
+                let show_i = MenuItemBuilder::new("Show Kepler").id("show").build(app)?;
+                let toggle_text = if is_started { "Stop Tunnel" } else { "Start Tunnel" };
+                let toggle_i = MenuItemBuilder::new(toggle_text).id("toggle").build(app)?;
+                let quit_i = MenuItemBuilder::new("Quit").id("quit").build(app)?;
 
-            *state.tray_toggle_item.lock() = Some(toggle_i.clone());
+                *state.tray_toggle_item.lock() = Some(toggle_i.clone());
 
-            let menu = MenuBuilder::new(app)
-                .items(&[&show_i, &toggle_i, &quit_i])
-                .build()?;
+                let menu = MenuBuilder::new(app)
+                    .items(&[&show_i, &toggle_i, &quit_i])
+                    .build()?;
 
-            let icon_bytes = if is_started {
-                include_bytes!("../icons/icon-active.png") as &[u8]
-            } else {
-                include_bytes!("../icons/icon-inactive.png") as &[u8]
-            };
-            let icon = Image::from_bytes(icon_bytes).map_err(|e| {
-                error!(error = %e, "Failed to decode icon-inactive.png for system tray");
-                format!("Failed to decode icon: {}", e)
-            })?;
+                let icon_bytes = if is_started {
+                    include_bytes!("../icons/icon-active.png") as &[u8]
+                } else {
+                    include_bytes!("../icons/icon-inactive.png") as &[u8]
+                };
+                let icon = Image::from_bytes(icon_bytes).map_err(|e| {
+                    error!(error = %e, "Failed to decode icon-inactive.png for system tray");
+                    format!("Failed to decode icon: {}", e)
+                })?;
 
-            let _tray = TrayIconBuilder::with_id("main")
-                .icon(icon)
-                .menu(&menu)
-                .show_menu_on_left_click(false)
-                .on_tray_icon_event(|tray, event| {
-                    if let TrayIconEvent::Click {
-                        button: MouseButton::Left,
-                        button_state: MouseButtonState::Up,
-                        ..
-                    } = event {
-                        let app = tray.app_handle();
-                        if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.show();
-                            let _ = window.set_focus();
-                        }
-                    }
-                })
-                .on_menu_event(|app, event| {
-                    match event.id.as_ref() {
-                        "show" => {
+                let _tray = TrayIconBuilder::with_id("main")
+                    .icon(icon)
+                    .menu(&menu)
+                    .show_menu_on_left_click(false)
+                    .on_tray_icon_event(|tray, event| {
+                        if let TrayIconEvent::Click {
+                            button: MouseButton::Left,
+                            button_state: MouseButtonState::Up,
+                            ..
+                        } = event {
+                            let app = tray.app_handle();
                             if let Some(window) = app.get_webview_window("main") {
                                 let _ = window.show();
                                 let _ = window.set_focus();
                             }
                         }
-                        "toggle" => {
-                            let app_handle = app.clone();
-                            tauri::async_runtime::spawn(async move {
-                                let state = app_handle.state::<AppState>();
-                                let active = !*state.tunnel_started.lock();
-                                set_global_tunnel_active_internal(active, &app_handle, &state).await;
-                            });
+                    })
+                    .on_menu_event(|app, event| {
+                        match event.id.as_ref() {
+                            "show" => {
+                                if let Some(window) = app.get_webview_window("main") {
+                                    let _ = window.show();
+                                    let _ = window.set_focus();
+                                }
+                            }
+                            "toggle" => {
+                                let app_handle = app.clone();
+                                tauri::async_runtime::spawn(async move {
+                                    let state = app_handle.state::<AppState>();
+                                    let active = !*state.tunnel_started.lock();
+                                    set_global_tunnel_active_internal(active, &app_handle, &state).await;
+                                });
+                            }
+                            "quit" => {
+                                app.exit(0);
+                            }
+                            _ => {}
                         }
-                        "quit" => {
-                            app.exit(0);
-                        }
-                        _ => {}
+                    })
+                    .build(app)?;
+
+                // nat reaper task
+                let nat = Arc::clone(&state.nat_table);
+                tauri::async_runtime::spawn(async move {
+                    let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+                    loop {
+                        interval.tick().await;
+                        nat.reap_stale(std::time::Duration::from_secs(120), std::time::Duration::from_secs(1800));
                     }
-                })
-                .build(app)?;
+                });
 
-            // nat reaper task
-            let nat = Arc::clone(&state.nat_table);
+                // process monitor and auto-tunnel task
+                let active_pids = Arc::clone(&state.active_pids);
+                let auto_names = Arc::clone(&state.auto_tunnel_names);
+                let shutdown_tx = Arc::clone(&state.shutdown_tx);
+                let tunnel_engine = Arc::clone(&state.tunnel_engine);
+                let nat_table = Arc::clone(&state.nat_table);
+                let proxy_config = Arc::clone(&state.proxy_config);
+                let tunnel_started = Arc::clone(&state.tunnel_started);
+                let tray_toggle_item = Arc::clone(&state.tray_toggle_item);
 
-            tauri::async_runtime::spawn(async move {
-                let mut interval =
-                    tokio::time::interval(std::time::Duration::from_secs(30));
+                tauri::async_runtime::spawn(async move {
+                    let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
+                    loop {
+                        interval.tick().await;
 
-                loop {
-                    interval.tick().await;
-                    nat.reap_stale(std::time::Duration::from_secs(120));
-                }
-            });
+                        let running_procs = process_list::get_processes();
+                        let running_pids_set: std::collections::HashSet<u32> = running_procs.iter().map(|p| p.pid).collect();
 
-            // process monitor and auto-tunnel task
-            let active_pids = Arc::clone(&state.active_pids);
-            let auto_names = Arc::clone(&state.auto_tunnel_names);
-            let shutdown_tx = Arc::clone(&state.shutdown_tx);
-            let tunnel_engine = Arc::clone(&state.tunnel_engine);
-            let nat_table = Arc::clone(&state.nat_table);
-            let proxy_config = Arc::clone(&state.proxy_config);
-            let tunnel_started = Arc::clone(&state.tunnel_started);
-            let tray_toggle_item = Arc::clone(&state.tray_toggle_item);
-
-            tauri::async_runtime::spawn(async move {
-                let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
-                loop {
-                    interval.tick().await;
-
-                    // enumerate processes
-                    let running_procs = process_list::get_processes();
-                    let running_pids_set: std::collections::HashSet<u32> = running_procs.iter().map(|p| p.pid).collect();
-
-                    // reap dead pids
-                    {
-                        let mut pids = active_pids.lock();
-                        let initial_len = pids.len();
-                        pids.retain(|pid| running_pids_set.contains(pid));
-                        if pids.len() != initial_len {
-                            info!("Reaped dead PIDs. Active count: {}", pids.len());
-                        }
-                    }
-
-                    // start/stop engine based on state
-                    let is_started = *tunnel_started.lock();
-                    let should_run = is_started && (!active_pids.lock().is_empty() || !auto_names.lock().is_empty());
-                    if should_run {
-                        let is_running = tunnel_engine.lock().is_some();
-                        if !is_running {
-                            info!("Auto-tunnel rules or active PIDs present but engine not running — starting tunnel engine");
-                            let state_ref = AppState {
-                                active_pids: Arc::clone(&active_pids),
-                                shutdown_tx: Arc::clone(&shutdown_tx),
-                                tunnel_engine: Arc::clone(&tunnel_engine),
-                                nat_table: Arc::clone(&nat_table),
-                                proxy_config: Arc::clone(&proxy_config),
-                                auto_tunnel_names: Arc::clone(&auto_names),
-                                tunnel_started: Arc::clone(&tunnel_started),
-                                tray_toggle_item: Arc::clone(&tray_toggle_item),
-                            };
-                            if let Err(e) = ensure_engine_started(&state_ref).await {
-                                error!(%e, "Failed to start tunnel engine for auto-tunnel");
+                        {
+                            let mut pids = active_pids.lock();
+                            let initial_len = pids.len();
+                            pids.retain(|pid| running_pids_set.contains(pid));
+                            if pids.len() != initial_len {
+                                info!("Reaped dead PIDs. Active count: {}", pids.len());
                             }
                         }
-                    } else {
-                        let mut engine_guard = tunnel_engine.lock();
-                        if engine_guard.is_some() {
-                            info!("No active PIDs or auto-tunnel rules remaining — stopping tunnel engine");
-                            if let Some(tx) = shutdown_tx.lock().take() {
-                                let _ = tx.send(());
+
+                        let is_started = *tunnel_started.lock();
+                        let should_run = is_started && (!active_pids.lock().is_empty() || !auto_names.lock().is_empty());
+                        if should_run {
+                            let is_running = tunnel_engine.lock().is_some();
+                            if !is_running {
+                                info!("Auto-tunnel rules or active PIDs present but engine not running — starting tunnel engine");
+                                let state_ref = AppState {
+                                    active_pids: Arc::clone(&active_pids),
+                                    shutdown_tx: Arc::clone(&shutdown_tx),
+                                    tunnel_engine: Arc::clone(&tunnel_engine),
+                                    nat_table: Arc::clone(&nat_table),
+                                    proxy_config: Arc::clone(&proxy_config),
+                                    auto_tunnel_names: Arc::clone(&auto_names),
+                                    tunnel_started: Arc::clone(&tunnel_started),
+                                    tray_toggle_item: Arc::clone(&tray_toggle_item),
+                                };
+                                if let Err(e) = ensure_engine_started(&state_ref).await {
+                                    error!(%e, "Failed to start tunnel engine for auto-tunnel");
+                                }
                             }
-                            if let Some(engine) = engine_guard.take() {
-                                engine.stop();
+                        } else {
+                            let mut engine_guard = tunnel_engine.lock();
+                            if engine_guard.is_some() {
+                                info!("No active PIDs or auto-tunnel rules remaining — stopping tunnel engine");
+                                if let Some(tx) = shutdown_tx.lock().take() {
+                                    let _ = tx.send(());
+                                }
+                                if let Some(engine) = engine_guard.take() {
+                                    engine.stop();
+                                }
+                                nat_table.clear();
                             }
-                            nat_table.clear();
                         }
-                    }
 
-                    // auto-tunnel matched processes
-                    let targets = auto_names.lock().clone();
-                    if !targets.is_empty() {
-                        for proc in &running_procs {
-                            let name_lower = proc.name.to_lowercase();
-                            let path_lower = proc.exe_path.to_lowercase();
-                            let is_match = targets.iter().any(|target| {
-                                let target_lower = target.to_lowercase();
-                                name_lower == target_lower || 
-                                name_lower == format!("{}.exe", target_lower) ||
-                                target_lower == format!("{}.exe", name_lower) ||
-                                path_lower.contains(&target_lower)
-                            });
+                        let targets = auto_names.lock().clone();
+                        if !targets.is_empty() {
+                            for proc in &running_procs {
+                                let name_lower = proc.name.to_lowercase();
+                                let path_lower = proc.exe_path.to_lowercase();
+                                let is_match = targets.iter().any(|target| {
+                                    let target_lower = target.to_lowercase();
+                                    name_lower == target_lower || 
+                                    name_lower == format!("{}.exe", target_lower) ||
+                                    target_lower == format!("{}.exe", name_lower) ||
+                                    path_lower.contains(&target_lower)
+                                });
 
-                            if is_match {
-                                // Add to tunnel if not already present
-                                let is_already_tunneled = active_pids.lock().contains(&proc.pid);
-                                if !is_already_tunneled {
-                                    info!(pid = proc.pid, name = %proc.name, "Auto-tunnel matched process. Starting tunnel.");
-                                    let state_ref = AppState {
-                                        active_pids: Arc::clone(&active_pids),
-                                        shutdown_tx: Arc::clone(&shutdown_tx),
-                                        tunnel_engine: Arc::clone(&tunnel_engine),
-                                        nat_table: Arc::clone(&nat_table),
-                                        proxy_config: Arc::clone(&proxy_config),
-                                        auto_tunnel_names: Arc::clone(&auto_names),
-                                        tunnel_started: Arc::clone(&tunnel_started),
-                                        tray_toggle_item: Arc::clone(&tray_toggle_item),
-                                    };
-                                    if let Err(e) = start_tunnel_internal(proc.pid, &state_ref).await {
-                                        error!(pid = proc.pid, %e, "Failed to auto-tunnel process");
+                                if is_match {
+                                    let is_already_tunneled = active_pids.lock().contains(&proc.pid);
+                                    if !is_already_tunneled {
+                                        info!(pid = proc.pid, name = %proc.name, "Auto-tunnel matched process. Starting tunnel.");
+                                        let state_ref = AppState {
+                                            active_pids: Arc::clone(&active_pids),
+                                            shutdown_tx: Arc::clone(&shutdown_tx),
+                                            tunnel_engine: Arc::clone(&tunnel_engine),
+                                            nat_table: Arc::clone(&nat_table),
+                                            proxy_config: Arc::clone(&proxy_config),
+                                            auto_tunnel_names: Arc::clone(&auto_names),
+                                            tunnel_started: Arc::clone(&tunnel_started),
+                                            tray_toggle_item: Arc::clone(&tray_toggle_item),
+                                        };
+                                        if let Err(e) = start_tunnel_internal(proc.pid, &state_ref).await {
+                                            error!(pid = proc.pid, %e, "Failed to auto-tunnel process");
+                                        }
                                     }
                                 }
                             }
                         }
                     }
-                }
-            });
+                });
 
-            Ok(())
-        })
+                Ok(())
+            });
+    }
+
+    let app = builder
         .build(tauri::generate_context!())
         .expect("Fatal: Tauri application failed to build");
 

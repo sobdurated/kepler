@@ -56,6 +56,31 @@ pub async fn start_tcp_proxy(
     }
 }
 
+struct NatGuard {
+    nat: Arc<NatTable>,
+    key: NatKey,
+    removed: bool,
+}
+
+impl Drop for NatGuard {
+    fn drop(&mut self) {
+        if !self.removed {
+            self.nat.remove(&self.key);
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn set_keepalive(stream: &tokio::net::TcpStream) -> std::io::Result<()> {
+    use socket2::{SockRef, TcpKeepalive};
+    let sock_ref = SockRef::from(stream);
+    let ka = TcpKeepalive::new()
+        .with_time(Duration::from_secs(60))
+        .with_interval(Duration::from_secs(10));
+    sock_ref.set_tcp_keepalive(&ka)?;
+    Ok(())
+}
+
 /// handles tcp connection
 async fn handle_tcp_connection(
     mut inbound: TcpStream,
@@ -72,6 +97,17 @@ async fn handle_tcp_connection(
             return;
         }
     };
+
+    let mut nat_guard = NatGuard {
+        nat: Arc::clone(&nat),
+        key,
+        removed: false,
+    };
+
+    #[cfg(target_os = "windows")]
+    if let Err(e) = set_keepalive(&inbound) {
+        debug!(%e, "Failed to set keepalive on inbound TCP socket");
+    }
 
     info!(
         peer = %peer_addr,
@@ -119,6 +155,11 @@ async fn handle_tcp_connection(
         }
     };
 
+    #[cfg(target_os = "windows")]
+    if let Err(e) = set_keepalive(&outbound) {
+        debug!(%e, "Failed to set keepalive on outbound TCP socket");
+    }
+
     // copy data both ways
     let (mut in_read, mut in_write) = inbound.split();
     let (mut out_read, mut out_write) = outbound.split();
@@ -142,6 +183,7 @@ async fn handle_tcp_connection(
     }
 
     // clean up nat entry
+    nat_guard.removed = true;
     nat.remove(&key);
     debug!(peer_port = peer_addr.port(), "TCP connection closed, NAT entry removed");
 }

@@ -99,13 +99,18 @@ impl NatTable {
         }
     }
 
-    /// reaps stale udp entries
-    pub fn reap_stale(&self, max_age: Duration) {
+    /// reaps stale entries (UDP and TCP)
+    pub fn reap_stale(&self, udp_max_age: Duration, tcp_max_age: Duration) {
         self.inner.retain(|key, dest| {
-            if key.protocol == Protocol::Udp && dest.last_seen.elapsed() > max_age {
+            let max_age = match key.protocol {
+                Protocol::Udp => udp_max_age,
+                Protocol::Tcp => tcp_max_age,
+            };
+            if dest.last_seen.elapsed() > max_age {
                 tracing::debug!(
                     port = key.src_port,
-                    "Reaping stale UDP NAT entry"
+                    protocol = ?key.protocol,
+                    "Reaping stale NAT entry"
                 );
                 false
             } else {

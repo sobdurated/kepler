@@ -1,4 +1,5 @@
 use crate::nat::NatTable;
+#[cfg(target_os = "windows")]
 use crate::tunnel::TunnelEngine;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
@@ -37,11 +38,13 @@ impl ProxyConfig {
 pub struct AppState {
     pub active_pids: Arc<Mutex<HashSet<u32>>>,
     pub shutdown_tx: Arc<Mutex<Option<broadcast::Sender<()>>>>,
+    #[cfg(target_os = "windows")]
     pub tunnel_engine: Arc<Mutex<Option<TunnelEngine>>>,
     pub nat_table: Arc<NatTable>,
     pub proxy_config: Arc<Mutex<ProxyConfig>>,
     pub auto_tunnel_names: Arc<Mutex<HashSet<String>>>,
     pub tunnel_started: Arc<Mutex<bool>>,
+    #[cfg(target_os = "windows")]
     pub tray_toggle_item: Arc<Mutex<Option<tauri::menu::MenuItem<tauri::Wry>>>>,
 }
 
@@ -51,12 +54,15 @@ impl AppState {
         Self {
             active_pids: Arc::new(Mutex::new(HashSet::new())),
             shutdown_tx: Arc::new(Mutex::new(None)),
+            #[cfg(target_os = "windows")]
             tunnel_engine: Arc::new(Mutex::new(None)),
             nat_table: Arc::new(NatTable::new()),
             proxy_config: Arc::new(Mutex::new(ProxyConfig::default())),
             auto_tunnel_names: Arc::new(Mutex::new(HashSet::new())),
             tunnel_started: Arc::new(Mutex::new(false)),
+            #[cfg(target_os = "windows")]
             tray_toggle_item: Arc::new(Mutex::new(None)),
         }
     }
 }
+

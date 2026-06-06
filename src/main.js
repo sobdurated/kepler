@@ -260,14 +260,13 @@
     }
   }
 
-
-
   async function toggleMasterTunnel() {
     try {
       const nextState = !isTunnelStarted;
       await invoke("set_global_tunnel_active", { active: nextState });
       isTunnelStarted = nextState;
       updateMasterTunnelBtnState();
+      updateStatusPill();
       showToast(nextState ? "Tunnel started" : "Tunnel stopped", "success");
     } catch (err) {
       showToast(`Failed: ${err.message || err}`, "error");
@@ -431,11 +430,12 @@
 
   async function tunnelSelected() {
     actionsDropdown.classList.remove("dropdown--open");
-    const pids = Array.from(processTableBody.querySelectorAll(".process-checkbox:checked")).map((c) => parseInt(c.dataset.pid, 10));
+    const pids = Array.from(processTableBody.querySelectorAll(".process-checkbox:checked")).map((c) => c.dataset.pid);
     if (!pids.length) return;
     try {
-      await invoke("start_tunnels", { pids });
-      pids.forEach((p) => activePids.add(p));
+      const numericPids = pids.map(p => parseInt(p, 10));
+      await invoke("start_tunnels", { pids: numericPids });
+      numericPids.forEach((p) => activePids.add(p));
       selectAllCheckbox.checked = false;
       updateStatusPill();
       renderProcessList();
@@ -447,11 +447,12 @@
 
   async function stopSelected() {
     actionsDropdown.classList.remove("dropdown--open");
-    const pids = Array.from(processTableBody.querySelectorAll(".process-checkbox:checked")).map((c) => parseInt(c.dataset.pid, 10));
+    const pids = Array.from(processTableBody.querySelectorAll(".process-checkbox:checked")).map((c) => c.dataset.pid);
     if (!pids.length) return;
     try {
-      await invoke("stop_tunnels", { pids });
-      pids.forEach((p) => activePids.delete(p));
+      const numericPids = pids.map(p => parseInt(p, 10));
+      await invoke("stop_tunnels", { pids: numericPids });
+      numericPids.forEach((p) => activePids.delete(p));
       selectAllCheckbox.checked = false;
       updateStatusPill();
       renderProcessList();
