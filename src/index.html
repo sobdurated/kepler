@@ -127,7 +127,7 @@
         <span class="footer__stat"><span class="footer__label">Driver</span> <span
             id="statDriverValue">Ready</span></span>
       </div>
-      <span class="footer__ver">v0.1.0</span>
+      <span class="footer__ver" id="appVersion">…</span>
     </footer>
 
     <div class="modal-overlay" id="proxyModal" hidden>
@@ -175,6 +175,38 @@
           <span class="spacer"></span>
           <button class="btn" id="proxyCancel" type="button">Cancel</button>
           <button class="btn btn--primary" id="proxySave" type="button">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="updateModal" hidden>
+      <div class="modal-backdrop" id="updateModalBackdrop"></div>
+      <div class="modal">
+        <div class="modal__head">
+          <span class="modal__title">Update Available</span>
+        </div>
+        <div class="modal__body">
+          <p id="updateMessage" style="font-size: 13px; color: var(--text-2); line-height: 1.5;"></p>
+          
+          <div id="updateNotesContainer">
+            <div style="font-size: 11px; color: var(--text-3); font-weight: 600; text-transform: uppercase; margin-bottom: 6px; letter-spacing: 0.04em;">Release Notes</div>
+            <div id="updateNotes" style="max-height: 110px; overflow-y: auto; background: var(--bg-input); border: 1px solid var(--border); padding: 8px 10px; border-radius: var(--radius-sm); font-size: 11px; line-height: 1.5; color: var(--text-2); font-family: var(--mono); white-space: pre-wrap; word-break: break-all;"></div>
+          </div>
+          
+          <div id="updateProgressContainer" style="margin-top: 4px;" hidden>
+            <div style="display: flex; justify-content: space-between; font-size: 11px; color: var(--text-2); margin-bottom: 5px;">
+              <span id="updateProgressLabel">Downloading update…</span>
+              <span id="updateProgressPercent">0%</span>
+            </div>
+            <div style="height: 4px; background: #2a2a2a; border-radius: var(--radius-sm); overflow: hidden;">
+              <div id="updateProgressBar" style="height: 100%; width: 0%; background: #fff; transition: width 0.15s ease;"></div>
+            </div>
+          </div>
+        </div>
+        <div class="modal__foot">
+          <span class="spacer"></span>
+          <button class="btn" id="updateCancel" type="button">Later</button>
+          <button class="btn btn--primary" id="updateInstall" type="button">Update Now</button>
         </div>
       </div>
     </div>

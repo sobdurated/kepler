@@ -1,6 +1,6 @@
 [package]
 name = "kepler"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 description = "Per-application TCP+UDP network tunnel via WinDivert"
 
@@ -14,6 +14,8 @@ tauri-build = { version = "2", features = [] }
 # ── Tauri framework ──────────────────────────────────────────────
 tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-shell = "2"
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
 
 # ── Serialization (Tauri IPC) ───────────────────────────────────
 serde = { version = "1", features = ["derive"] }

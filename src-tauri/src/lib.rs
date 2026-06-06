@@ -276,6 +276,12 @@ async fn set_global_tunnel_active(active: bool, app: tauri::AppHandle, state: St
     Ok(())
 }
 
+/// returns current application version from Cargo metadata
+#[tauri::command]
+fn get_app_version() -> String {
+    env!("CARGO_PKG_VERSION").to_string()
+}
+
 /// returns current tunnel status
 #[tauri::command]
 async fn get_tunnel_status(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
@@ -482,6 +488,8 @@ pub fn run() {
 
     let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .manage(AppState::new());
 
     #[cfg(target_os = "windows")]
@@ -506,6 +514,7 @@ pub fn run() {
                 get_auto_tunnel_names,
                 set_auto_tunnel_names,
                 set_global_tunnel_active,
+                get_app_version,
             ])
             .setup(|app| {
                 let state = app.state::<AppState>();

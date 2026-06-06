@@ -54,6 +54,19 @@
   const proxyTest = $("#proxyTest");
   const proxyTestStatus = $("#proxyTestStatus");
 
+  const updateModal = $("#updateModal");
+  const updateModalBackdrop = $("#updateModalBackdrop");
+  const updateMessage = $("#updateMessage");
+  const updateNotes = $("#updateNotes");
+  const updateNotesContainer = $("#updateNotesContainer");
+  const updateProgressContainer = $("#updateProgressContainer");
+  const updateProgressLabel = $("#updateProgressLabel");
+  const updateProgressPercent = $("#updateProgressPercent");
+  const updateProgressBar = $("#updateProgressBar");
+  const updateCancel = $("#updateCancel");
+  const updateInstall = $("#updateInstall");
+  const appVersion = $("#appVersion");
+
   const statConnectionsValue = document.getElementById("statConnectionsValue");
 
   document.addEventListener("DOMContentLoaded", init);
@@ -64,6 +77,8 @@
     await fetchProcesses();
     await fetchAutoTunnelNames();
     startStatusPolling();
+    loadAppVersion();
+    setTimeout(checkForUpdates, 1000);
   }
 
   function bindEvents() {
@@ -104,6 +119,14 @@
     proxySave.addEventListener("click", saveProxyConfig);
     proxyTest.addEventListener("click", testProxyConnection);
 
+    updateModalBackdrop.addEventListener("click", () => {
+      if (!updateInstall.disabled) closeUpdateModal();
+    });
+    updateCancel.addEventListener("click", () => {
+      if (!updateInstall.disabled) closeUpdateModal();
+    });
+    updateInstall.addEventListener("click", installUpdate);
+
     proxyEnabled.addEventListener("change", () => {
       proxyEnabledLabel.textContent = proxyEnabled.checked ? "On" : "Off";
     });
@@ -118,6 +141,7 @@
       if (e.key === "Escape") {
         actionsDropdown.classList.remove("dropdown--open");
         if (!proxyModal.hidden) closeProxyModal();
+        else if (!updateModal.hidden && !updateInstall.disabled) closeUpdateModal();
         else if (document.activeElement === searchInput) searchInput.blur();
       }
     });
@@ -522,6 +546,96 @@
       tag.appendChild(x);
       autoTunnelTags.appendChild(tag);
     });
+  }
+
+  async function loadAppVersion() {
+    try {
+      const version = await invoke("get_app_version");
+      if (appVersion && version) {
+        appVersion.textContent = `v${version}`;
+      }
+    } catch (err) {
+      console.warn("Failed to fetch app version:", err);
+    }
+  }
+
+  let activeUpdate = null;
+
+  async function checkForUpdates() {
+    try {
+      if (!window.__TAURI__ || !window.__TAURI__.updater) return;
+      const update = await window.__TAURI__.updater.check();
+      if (update) {
+        activeUpdate = update;
+        showUpdateModal(update);
+      }
+    } catch (err) {
+      console.warn("Update check failed:", err);
+    }
+  }
+
+  function showUpdateModal(update) {
+    updateMessage.textContent = `A new version of Kepler (v${update.version}) is available. Would you like to download and install it now?`;
+    if (update.body) {
+      updateNotesContainer.hidden = false;
+      updateNotes.textContent = update.body;
+    } else {
+      updateNotesContainer.hidden = true;
+    }
+    updateProgressContainer.hidden = true;
+    updateInstall.disabled = false;
+    updateCancel.disabled = false;
+    updateModal.hidden = false;
+  }
+
+  function closeUpdateModal() {
+    updateModal.hidden = true;
+  }
+
+  async function installUpdate() {
+    if (!activeUpdate) return;
+    updateInstall.disabled = true;
+    updateCancel.disabled = true;
+    updateProgressContainer.hidden = false;
+    updateProgressPercent.textContent = "0%";
+    updateProgressBar.style.width = "0%";
+    updateProgressLabel.textContent = "Downloading update…";
+
+    let downloadedBytes = 0;
+
+    try {
+      await activeUpdate.downloadAndInstall((event) => {
+        const evType = (event && event.event) ? event.event.toLowerCase() : "";
+        if (evType === "started") {
+          updateProgressLabel.textContent = "Downloading update…";
+        } else if (evType === "progress" || evType === "downloadprogress") {
+          if (event.data && typeof event.data.chunkLength === 'number') {
+            downloadedBytes += event.data.chunkLength;
+            if (event.data.contentLength) {
+              const pct = Math.round((downloadedBytes / event.data.contentLength) * 100);
+              updateProgressPercent.textContent = `${pct}%`;
+              updateProgressBar.style.width = `${pct}%`;
+            } else {
+              updateProgressPercent.textContent = "";
+              updateProgressBar.style.width = "50%";
+            }
+          }
+        } else if (evType === "finished" || evType === "downloadfinished") {
+          updateProgressLabel.textContent = "Installing update…";
+          updateProgressPercent.textContent = "100%";
+          updateProgressBar.style.width = "100%";
+        }
+      });
+      
+      if (window.__TAURI__ && window.__TAURI__.process) {
+        await window.__TAURI__.process.relaunch();
+      }
+    } catch (err) {
+      showToast(`Update failed: ${err.message || err}`, "error");
+      updateInstall.disabled = false;
+      updateCancel.disabled = false;
+      updateProgressContainer.hidden = true;
+    }
   }
 
   function showToast(message, type = "error") {

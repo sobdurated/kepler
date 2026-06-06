@@ -114,6 +114,51 @@ sequenceDiagram
 - **administrator privileges**: WinDivert requires admin access to load its driver.
 - **WinDivert binaries**: The application expects `WinDivert.dll` and `WinDivert64.sys` in the working directory (supplied under `src-tauri/resources/windivert`).
 
+## Getting Started
+
+### 1. Installation
+
+1. **Install Node.js** (v20+ recommended).
+2. **Install Rust** via [rustup.rs](https://rustup.rs/).
+3. Clone this repository and install NPM dependencies:
+   ```bash
+   npm install
+   ```
+
+### 2. Running in Development Mode
+
+Since Kepler utilizes `WinDivert` to intercept network packets at the kernel level, the application **must be run with Administrator privileges**.
+
+1. Open your terminal of choice (PowerShell, Command Prompt, or terminal emulator) as **Administrator**.
+2. Start the development environment:
+   ```bash
+   npm run tauri dev
+   ```
+
+### 3. Production Builds
+
+To compile and package a production-ready build:
+
+1. Compile the installers (MSI and NSIS EXE):
+   ```bash
+   npm run tauri build
+   ```
+2. Find the generated installers under:
+   `src-tauri/target/release/bundle/`
+
+---
+
+## Code Signing & Auto-Updates
+
+Kepler supports secure auto-updates on startup, checking against releases hosted on GitHub. To enable build signing:
+
+1. **Generate a signing keypair**:
+   ```bash
+   npx tauri signer generate --ci
+   ```
+2. Add the generated private key to your GitHub repository secrets named `TAURI_SIGNING_PRIVATE_KEY`.
+3. The public key is embedded in `tauri.conf.json`. When you push a tag matching `v*` (e.g., `v0.1.2`), the GitHub Actions release workflow compiles, signs the binary, and attaches the update files alongside the `latest.json` updater manifest to the release page.
+
 ## Project Structure
 
 ```text
