@@ -181,3 +181,7 @@ Kepler supports secure auto-updates on startup, checking against releases hosted
 │   ├── build.rs          # tauri cargo build script
 │   └── tauri.conf.json   # tauri config
 ```
+
+## Privacy Policy
+
+Kepler operates entirely locally. It does not collect, store, or transmit any user data, network traffic, or personal information. All network interception and proxying take place on your local machine. The only outbound network requests made by the application are to GitHub's Releases API to check for updates.
