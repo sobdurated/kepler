@@ -327,6 +327,47 @@ pub async fn start_udp_relay(
     }
 }
 
+async fn route_dns_directly(
+    data: Vec<u8>,
+    peer_addr: SocketAddr,
+    dest_ip: std::net::Ipv4Addr,
+    relay_socket: Arc<UdpSocket>,
+) {
+    debug!("Routing DNS query directly to {}", dest_ip);
+    let temp_socket = match UdpSocket::bind("0.0.0.0:0").await {
+        Ok(s) => s,
+        Err(e) => {
+            error!(%e, "Failed to bind temporary UDP socket for direct DNS");
+            return;
+        }
+    };
+
+    if let Err(e) = temp_socket.send_to(&data, (dest_ip, 53)).await {
+        warn!(%e, %dest_ip, "Failed to send direct DNS query via temp socket");
+        return;
+    }
+
+    let mut response_buf = vec![0u8; 65535];
+    let recv_result = tokio::time::timeout(
+        Duration::from_secs(2),
+        temp_socket.recv_from(&mut response_buf)
+    ).await;
+
+    match recv_result {
+        Ok(Ok((len, _from))) => {
+            if let Err(e) = relay_socket.send_to(&response_buf[..len], peer_addr).await {
+                warn!(%e, %peer_addr, "Failed to send direct DNS response back to client");
+            }
+        }
+        Ok(Err(e)) => {
+            debug!(%e, "Error receiving direct DNS response");
+        }
+        Err(_) => {
+            debug!("Timeout waiting for direct DNS response");
+        }
+    }
+}
+
 /// routes udp packet
 async fn handle_udp_packet(
     data: Vec<u8>,
@@ -338,42 +379,12 @@ async fn handle_udp_packet(
     manager: Arc<UdpSessionManager>,
 ) {
     let peer_port = peer_addr.port();
+    let config = proxy_config.lock().clone();
+    let use_socks5 = config.enabled && !config.host.is_empty();
 
-    // direct dns query to avoid loops/leaks
-    if dest_port == 53 {
-        debug!("Routing DNS query directly to {}", dest_ip);
-        let temp_socket = match UdpSocket::bind("0.0.0.0:0").await {
-            Ok(s) => s,
-            Err(e) => {
-                error!(%e, "Failed to bind temporary UDP socket for direct DNS");
-                return;
-            }
-        };
-
-        if let Err(e) = temp_socket.send_to(&data, (dest_ip, 53)).await {
-            warn!(%e, %dest_ip, "Failed to send direct DNS query via temp socket");
-            return;
-        }
-
-        let mut response_buf = vec![0u8; 65535];
-        let recv_result = tokio::time::timeout(
-            Duration::from_secs(2),
-            temp_socket.recv_from(&mut response_buf)
-        ).await;
-
-        match recv_result {
-            Ok(Ok((len, _from))) => {
-                if let Err(e) = relay_socket.send_to(&response_buf[..len], peer_addr).await {
-                    warn!(%e, %peer_addr, "Failed to send direct DNS response back to client");
-                }
-            }
-            Ok(Err(e)) => {
-                debug!(%e, "Error receiving direct DNS response");
-            }
-            Err(_) => {
-                debug!("Timeout waiting for direct DNS response");
-            }
-        }
+    // If DNS query and SOCKS5 is not enabled, route directly
+    if dest_port == 53 && !use_socks5 {
+        route_dns_directly(data, peer_addr, dest_ip, relay_socket).await;
         return;
     }
 
@@ -404,7 +415,6 @@ async fn handle_udp_packet(
     
     // create new session
     debug!(peer_port, "Creating new UDP session");
-    let config = proxy_config.lock().clone();
     let now = std::time::Instant::now();
     let (cancel_tx, mut cancel_rx) = tokio::sync::oneshot::channel::<()>();
     
@@ -416,8 +426,8 @@ async fn handle_udp_packet(
         }
     };
     
-    // bypass socks5 for dns cuz udp limits
-    let backend = if config.enabled && !config.host.is_empty() && dest_port != 53 {
+    // associate through socks5 if enabled
+    let backend = if use_socks5 {
         match socks5::socks5_udp_associate(
             &config.addr(),
             config.username.as_deref(),
@@ -434,6 +444,10 @@ async fn handle_udp_packet(
             }
             Err(e) => {
                 warn!(%e, "SOCKS5 UDP ASSOCIATE failed for new session");
+                if dest_port == 53 {
+                    // Fallback to direct DNS resolution on failure
+                    route_dns_directly(data, peer_addr, dest_ip, relay_socket).await;
+                }
                 return;
             }
         }

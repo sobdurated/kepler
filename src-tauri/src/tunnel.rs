@@ -37,11 +37,11 @@ impl TunnelEngine {
         let running = Arc::new(AtomicBool::new(true));
 
 
-        // captures outbound tcp/udp except loopback/local proxy
+        // captures outbound tcp (except to local proxy) and outbound udp only on port 53 (DNS)
         let outbound_filter = format!(
             "outbound and ip.DstAddr != 127.0.0.1 and \
-             ((tcp and tcp.DstPort != {}) or (udp and udp.DstPort != {}))",
-            PROXY_TCP_PORT, PROXY_UDP_PORT
+             ((tcp and tcp.DstPort != {}) or (udp and udp.DstPort == 53))",
+            PROXY_TCP_PORT
         );
 
         // captures return packets from proxy
@@ -116,10 +116,11 @@ fn outbound_loop(
 
     // caches pid lookups
     let mut tcp_port_cache: std::collections::HashMap<u16, (u32, Instant)> = std::collections::HashMap::new();
-    let mut udp_port_cache: std::collections::HashMap<u16, (u32, Instant)> = std::collections::HashMap::new();
 
     // local pid copy to avoid lock contention
     let mut local_target_pids: HashSet<u32> = HashSet::new();
+    let mut local_keywords: HashSet<String> = HashSet::new();
+    let mut local_target_names: HashSet<String> = HashSet::new();
     let mut last_pid_set_refresh = Instant::now() - Duration::from_secs(10);
     let pid_set_refresh_interval = Duration::from_millis(200);
 
@@ -142,15 +143,38 @@ fn outbound_loop(
 
         if last_pid_set_refresh.elapsed() >= pid_set_refresh_interval {
             local_target_pids = target_pids.lock().clone();
+            let auto_rules = auto_tunnel_names.lock().clone();
+            
+            local_keywords.clear();
+            local_target_names.clear();
+            
+            for rule in &auto_rules {
+                let name = rule.to_lowercase().replace(".exe", "");
+                if name.len() >= 3 {
+                    local_keywords.insert(name);
+                }
+            }
+            
+            for &pid in &local_target_pids {
+                if pid != 0 {
+                    if let Some((proc_name, _)) = crate::process_list::get_process_by_pid(pid) {
+                        let name_lower = proc_name.to_lowercase();
+                        local_target_names.insert(name_lower.clone());
+                        let name = name_lower.replace(".exe", "");
+                        if name.len() >= 3 {
+                            local_keywords.insert(name);
+                        }
+                    }
+                }
+            }
             last_pid_set_refresh = Instant::now();
         }
 
         // cleanup expired cache
         if last_cleanup.elapsed() >= Duration::from_secs(10) {
             let now = Instant::now();
-            // tcp inactive 5m, udp 30s
+            // tcp inactive 5m
             tcp_port_cache.retain(|_, (_, last_seen)| now.duration_since(*last_seen) < Duration::from_secs(300));
-            udp_port_cache.retain(|_, (_, last_seen)| now.duration_since(*last_seen) < Duration::from_secs(30));
             last_cleanup = now;
         }
 
@@ -195,11 +219,22 @@ fn outbound_loop(
                     let mut is_self = false;
                     if let Some(pid) = pid_lookup::get_pid_for_port(src_port, true) {
                         if pid == std::process::id() {
-                            debug!(src_port, "Bypassing TCP DNS query from self");
                             is_self = true;
                         }
                     }
-                    !is_self
+                    if is_self {
+                        false
+                    } else {
+                        let mut should_hijack = false;
+                        let tcp_hdr_len = ((pkt[ihl + 12] >> 4) as usize) * 4;
+                        if len >= ihl + tcp_hdr_len + 14 {
+                            if let Some(domain) = parse_dns_query(&pkt[ihl + tcp_hdr_len + 2..len]) {
+                                should_hijack = local_keywords.iter().any(|kw| domain.contains(kw));
+                                debug!(%domain, should_hijack, "Parsed TCP DNS query");
+                            }
+                        }
+                        should_hijack
+                    }
                 } else {
                     let mut cache_hit = false;
                     let mut pid = 0;
@@ -207,8 +242,10 @@ fn outbound_loop(
                     // query os directly for new connections (syn)
                     if !is_tcp_syn {
                         if let Some(&(cached_pid, _)) = tcp_port_cache.get(&src_port) {
-                            pid = cached_pid;
-                            cache_hit = true;
+                            if cached_pid != 0 {
+                                pid = cached_pid;
+                                cache_hit = true;
+                            }
                         }
                     }
 
@@ -227,24 +264,36 @@ fn outbound_loop(
                                     if let Some((proc_name, exe_path)) = crate::process_list::get_process_by_pid(pid) {
                                         let name_lower = proc_name.to_lowercase();
                                         let path_lower = exe_path.to_lowercase();
-                                        let auto_rules = auto_tunnel_names.lock();
-                                        let is_match = auto_rules.iter().any(|target| {
-                                            let target_lower = target.to_lowercase();
-                                            name_lower == target_lower ||
-                                            name_lower == format!("{}.exe", target_lower) ||
-                                            target_lower == format!("{}.exe", name_lower) ||
-                                            path_lower.contains(&target_lower)
-                                        });
+                                        
+                                        // 1. Check if matches any active target process name
+                                        let mut is_match = local_target_names.contains(&name_lower);
+                                        
+                                        // 2. Check auto-tunnel rules
+                                        if !is_match {
+                                            let auto_rules = auto_tunnel_names.lock();
+                                            is_match = auto_rules.iter().any(|target| {
+                                                let target_lower = target.to_lowercase();
+                                                name_lower == target_lower ||
+                                                name_lower == format!("{}.exe", target_lower) ||
+                                                target_lower == format!("{}.exe", name_lower) ||
+                                                path_lower.contains(&target_lower)
+                                            });
+                                        }
+                                        
                                         if is_match {
                                             info!(pid, name = %proc_name, "Real-time match: Auto-tunnel matched process (TCP). Adding PID to tunnel set.");
                                             target_pids.lock().insert(pid);
                                             local_target_pids.insert(pid);
+                                            local_target_names.insert(name_lower.clone());
+                                            let name = name_lower.replace(".exe", "");
+                                            if name.len() >= 3 {
+                                                local_keywords.insert(name);
+                                            }
                                         }
                                     }
                                 }
                             }
                         } else {
-
                             tcp_port_cache.insert(src_port, (0, now));
                         }
                     } else if let Some(entry) = tcp_port_cache.get_mut(&src_port) {
@@ -259,63 +308,26 @@ fn outbound_loop(
                 }
             }
             PROTO_UDP => {
-                if dst_port == 53 {
-                    let mut is_self = false;
-                    if let Some(pid) = pid_lookup::get_pid_for_port(src_port, false) {
-                        if pid == std::process::id() {
-                            debug!(src_port, "Bypassing UDP DNS query from self");
-                            is_self = true;
+                let mut is_self = false;
+                if let Some(pid) = pid_lookup::get_pid_for_port(src_port, false) {
+                    if pid == std::process::id() {
+                        is_self = true;
+                    }
+                }
+                
+                if is_self {
+                    false
+                } else if dst_port == 53 {
+                    let mut should_hijack = false;
+                    if len >= ihl + 20 { // UDP header (8) + DNS header (12)
+                        if let Some(domain) = parse_dns_query(&pkt[ihl + 8..len]) {
+                            should_hijack = local_keywords.iter().any(|kw| domain.contains(kw));
+                            debug!(%domain, should_hijack, "Parsed UDP DNS query");
                         }
                     }
-                    !is_self
+                    should_hijack
                 } else {
-                    let mut cache_hit = false;
-                    let mut pid = 0;
-
-                    if let Some(&(cached_pid, _)) = udp_port_cache.get(&src_port) {
-                        pid = cached_pid;
-                        cache_hit = true;
-                    }
-
-                    if !cache_hit {
-                        if let Some(os_pid) = pid_lookup::get_pid_for_port(src_port, false) {
-                            pid = os_pid;
-                            if pid == std::process::id() {
-                                udp_port_cache.insert(src_port, (0, now));
-                                pid = 0;
-                            } else {
-                                udp_port_cache.insert(src_port, (pid, now));
-                                debug!(src_port, pid, is_target = local_target_pids.contains(&pid), "Resolved new UDP port");
-                                
-                                // check auto-tunnel rules
-                                if pid != 0 && !local_target_pids.contains(&pid) {
-                                    if let Some((proc_name, exe_path)) = crate::process_list::get_process_by_pid(pid) {
-                                        let name_lower = proc_name.to_lowercase();
-                                        let path_lower = exe_path.to_lowercase();
-                                        let auto_rules = auto_tunnel_names.lock();
-                                        let is_match = auto_rules.iter().any(|target| {
-                                            let target_lower = target.to_lowercase();
-                                            name_lower == target_lower ||
-                                            name_lower == format!("{}.exe", target_lower) ||
-                                            target_lower == format!("{}.exe", name_lower) ||
-                                            path_lower.contains(&target_lower)
-                                        });
-                                        if is_match {
-                                            info!(pid, name = %proc_name, "Real-time match: Auto-tunnel matched process (UDP). Adding PID to tunnel set.");
-                                            target_pids.lock().insert(pid);
-                                            local_target_pids.insert(pid);
-                                        }
-                                    }
-                                }
-                            }
-                        } else {
-                            udp_port_cache.insert(src_port, (0, now));
-                        }
-                    } else if let Some(entry) = udp_port_cache.get_mut(&src_port) {
-                        entry.1 = now;
-                    }
-
-                    local_target_pids.contains(&pid)
+                    false
                 }
             }
             _ => false,
@@ -541,3 +553,37 @@ fn return_loop(handle: &DivertHandle, nat: &NatTable, running: &AtomicBool) {
 
     info!("Return interception thread exited");
 }
+
+fn parse_dns_query(payload: &[u8]) -> Option<String> {
+    if payload.len() < 12 {
+        return None;
+    }
+    let qdcount = u16::from_be_bytes([payload[4], payload[5]]);
+    if qdcount == 0 {
+        return None;
+    }
+    let mut pos = 12;
+    let mut domain = String::new();
+    while pos < payload.len() {
+        let len = payload[pos] as usize;
+        if len == 0 {
+            break;
+        }
+        if (len & 0xC0) == 0xC0 {
+            break;
+        }
+        if pos + 1 + len > payload.len() {
+            return None;
+        }
+        if !domain.is_empty() {
+            domain.push('.');
+        }
+        let label = std::str::from_utf8(&payload[pos + 1..pos + 1 + len]).ok()?;
+        domain.push_str(label);
+        pos += 1 + len;
+    }
+    Some(domain.to_lowercase())
+}
+
+
+

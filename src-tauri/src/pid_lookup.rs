@@ -64,9 +64,11 @@ extern "system" {
 /// returns pid owning the port
 pub fn get_pid_for_port(target_port: u16, is_tcp: bool) -> Option<u32> {
     let table_class = if is_tcp { TCP_TABLE_OWNER_PID_ALL } else { UDP_TABLE_OWNER_PID };
+    let max_attempts = if is_tcp { 3 } else { 1 };
 
-    // retry 3 times cuz transient delays
-    for attempt in 1..=3 {
+    // retry TCP queries up to 3 times because of transient registration delays.
+    // UDP queries are connectionless and should not be retried to avoid adding latency.
+    for attempt in 1..=max_attempts {
         let mut size: u32 = 0;
         unsafe {
             if is_tcp {
@@ -77,7 +79,7 @@ pub fn get_pid_for_port(target_port: u16, is_tcp: bool) -> Option<u32> {
         }
 
         if size == 0 {
-            if attempt < 3 {
+            if attempt < max_attempts {
                 std::thread::sleep(std::time::Duration::from_millis(1));
                 continue;
             }
@@ -94,7 +96,7 @@ pub fn get_pid_for_port(target_port: u16, is_tcp: bool) -> Option<u32> {
         };
 
         if ret != NO_ERROR {
-            if attempt < 3 {
+            if attempt < max_attempts {
                 std::thread::sleep(std::time::Duration::from_millis(1));
                 continue;
             }
@@ -138,12 +140,12 @@ pub fn get_pid_for_port(target_port: u16, is_tcp: bool) -> Option<u32> {
         }
 
 
-        if attempt < 3 {
+        if attempt < max_attempts {
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
     }
 
-    warn!(target_port, is_tcp, "get_pid_for_port failed to resolve port to PID after 3 attempts");
+    warn!(target_port, is_tcp, "get_pid_for_port failed to resolve port to PID after {} attempts", max_attempts);
     None
 }
 

@@ -68,6 +68,55 @@ fn reply_message(code: u8) -> &'static str {
 
 
 
+async fn read_socks5_response(stream: &mut TcpStream) -> Result<(u8, u8, Ipv4Addr, u16), Socks5Error> {
+    let mut header = [0u8; 4];
+    stream.read_exact(&mut header).await?;
+    
+    let ver = header[0];
+    let rep = header[1];
+    let atyp = header[3];
+    
+    if ver != SOCKS_VERSION {
+        return Err(Socks5Error::ProtocolError(format!(
+            "expected SOCKS5 response version, got 0x{:02x}",
+            ver
+        )));
+    }
+    
+    let (ip, port) = match atyp {
+        0x01 => { // IPv4
+            let mut addr_port = [0u8; 6];
+            stream.read_exact(&mut addr_port).await?;
+            let ip = Ipv4Addr::new(addr_port[0], addr_port[1], addr_port[2], addr_port[3]);
+            let port = u16::from_be_bytes([addr_port[4], addr_port[5]]);
+            (ip, port)
+        }
+        0x03 => { // Domain name
+            let mut len_buf = [0u8; 1];
+            stream.read_exact(&mut len_buf).await?;
+            let len = len_buf[0] as usize;
+            let mut domain_port = vec![0u8; len + 2];
+            stream.read_exact(&mut domain_port).await?;
+            let port = u16::from_be_bytes([domain_port[len], domain_port[len + 1]]);
+            (Ipv4Addr::new(0, 0, 0, 0), port)
+        }
+        0x04 => { // IPv6
+            let mut addr_port = [0u8; 18];
+            stream.read_exact(&mut addr_port).await?;
+            let port = u16::from_be_bytes([addr_port[16], addr_port[17]]);
+            (Ipv4Addr::new(0, 0, 0, 0), port)
+        }
+        other => {
+            return Err(Socks5Error::ProtocolError(format!(
+                "unsupported SOCKS5 address type 0x{:02x}",
+                other
+            )));
+        }
+    };
+    
+    Ok((ver, rep, ip, port))
+}
+
 pub async fn socks5_connect(
     proxy_addr: &str,
     dest_ip: Ipv4Addr,
@@ -98,11 +147,10 @@ pub async fn socks5_connect(
     stream.write_all(&req).await?;
 
     // read response
-    let mut resp = [0u8; 10];
-    stream.read_exact(&mut resp).await?;
+    let (_ver, rep, _ip, _port) = read_socks5_response(&mut stream).await?;
 
-    if resp[1] != REP_SUCCESS {
-        return Err(Socks5Error::RequestFailed(resp[1]));
+    if rep != REP_SUCCESS {
+        return Err(Socks5Error::RequestFailed(rep));
     }
 
     debug!("SOCKS5 CONNECT succeeded");
@@ -140,25 +188,35 @@ pub async fn socks5_udp_associate(
     stream.write_all(&req).await?;
 
 
-    let mut resp = [0u8; 10];
-    stream.read_exact(&mut resp).await?;
+    let (_ver, rep, relay_ip, relay_port) = read_socks5_response(&mut stream).await?;
 
-    if resp[1] != REP_SUCCESS {
-        return Err(Socks5Error::RequestFailed(resp[1]));
+    if rep != REP_SUCCESS {
+        return Err(Socks5Error::RequestFailed(rep));
     }
 
 
-    let relay_ip = Ipv4Addr::new(resp[4], resp[5], resp[6], resp[7]);
-    let relay_port = u16::from_be_bytes([resp[8], resp[9]]);
-
-    // if unspecified, use proxy ip
+    // if unspecified, use remote proxy ip directly from peer_addr
     let relay_ip = if relay_ip.is_unspecified() {
-        let proxy_ip: Ipv4Addr = proxy_addr
-            .split(':')
-            .next()
-            .and_then(|h| h.parse().ok())
-            .unwrap_or(Ipv4Addr::new(127, 0, 0, 1));
-        proxy_ip
+        match stream.peer_addr() {
+            Ok(addr) => match addr.ip() {
+                std::net::IpAddr::V4(ipv4) => ipv4,
+                std::net::IpAddr::V6(_) => {
+                    // fallback to parsing if ipv6 (rare)
+                    proxy_addr
+                        .split(':')
+                        .next()
+                        .and_then(|h| h.parse().ok())
+                        .unwrap_or(Ipv4Addr::new(127, 0, 0, 1))
+                }
+            },
+            Err(_) => {
+                proxy_addr
+                    .split(':')
+                    .next()
+                    .and_then(|h| h.parse().ok())
+                    .unwrap_or(Ipv4Addr::new(127, 0, 0, 1))
+            }
+        }
     } else {
         relay_ip
     };
