@@ -37,6 +37,9 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
 
+      - name: generate latest.json
+        run: node scripts/generate-manifest.js
+
       - name: create github release
         uses: softprops/action-gh-release@v2
         with:
@@ -44,6 +47,5 @@ jobs:
           files: |
             src-tauri/target/release/bundle/nsis/*.exe
             src-tauri/target/release/bundle/msi/*.msi
-            src-tauri/target/release/bundle/nsis/*.zip
             src-tauri/target/release/bundle/nsis/*.sig
             src-tauri/target/release/latest.json
